@@ -417,7 +417,7 @@ fetch_weather() {
   local url
   local json
 
-  url="https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&timezone=Asia%2FTokyo&past_days=92&forecast_days=16&hourly=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,surface_pressure&daily=sunrise,sunset"
+  url="https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&timezone=Asia%2FTokyo&wind_speed_unit=ms&past_days=92&forecast_days=16&hourly=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,surface_pressure&daily=sunrise,sunset"
   json="$(curl -fsSL "$url" 2>/dev/null || true)"
 
   [ -z "$json" ] && return 0
