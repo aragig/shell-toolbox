@@ -14,6 +14,7 @@
 # - 波高
 # - 波向
 # - 波周期
+# - 海水温
 # - 日の出 / 日の入
 # - 月齢
 # - 潮名
@@ -28,7 +29,7 @@
 # 使い方:
 #   ./fish-info.sh "小田原"
 #   ./fish-info.sh "小田原" --date 2026-03-27 --hour 6
-#   ./fish-info.sh --lat 35.253018 --lon 139.170312 --place "小田原" --date 2026-03-22 --hour 12
+#   ./fish-info.sh --lat 35.2556 --lon 139.1597 --place "小田原" --date 2026-03-27 --hour 18
 #
 # 環境変数:
 #   WORLDTIDES_API_KEY=xxxxx   # 任意。ある場合のみ満潮/干潮を取得
@@ -398,6 +399,7 @@ set_default_values() {
   WAVE_HEIGHT="-"
   WAVE_DIRECTION="-"
   WAVE_PERIOD="-"
+  SEA_SURFACE_TEMPERATURE="-"
   TIDE_HIGH="-"
   TIDE_LOW="-"
 }
@@ -457,7 +459,7 @@ fetch_marine() {
   local json
   local v
 
-  url="https://marine-api.open-meteo.com/v1/marine?latitude=${LAT}&longitude=${LON}&timezone=Asia%2FTokyo&past_days=92&forecast_days=16&hourly=wave_height,wave_direction,wave_period"
+  url="https://marine-api.open-meteo.com/v1/marine?latitude=${LAT}&longitude=${LON}&timezone=Asia%2FTokyo&past_days=92&forecast_days=16&hourly=wave_height,wave_direction,wave_period,sea_surface_temperature"
   json="$(curl -fsSL "$url" 2>/dev/null || true)"
 
   [ -z "$json" ] && return 0
@@ -470,6 +472,9 @@ fetch_marine() {
 
   v="$(pick_hourly_value "$json" wave_period)"
   [ -n "$v" ] && WAVE_PERIOD="$v"
+
+  v="$(pick_hourly_value "$json" sea_surface_temperature)"
+  [ -n "$v" ] && SEA_SURFACE_TEMPERATURE="$v"
 }
 
 fetch_tide() {
@@ -546,12 +551,14 @@ WIND_SPEED="$(format_numeric "$WIND_SPEED")"
 PRESSURE="$(format_numeric "$PRESSURE")"
 WAVE_HEIGHT="$(format_numeric "$WAVE_HEIGHT")"
 WAVE_PERIOD="$(format_numeric "$WAVE_PERIOD")"
+SEA_SURFACE_TEMPERATURE="$(format_numeric "$SEA_SURFACE_TEMPERATURE")"
 
 [ "$TEMPERATURE" != "-" ] && TEMPERATURE="${TEMPERATURE}℃"
 [ "$WIND_SPEED" != "-" ] && WIND_SPEED="${WIND_SPEED}m/s"
 [ "$PRESSURE" != "-" ] && PRESSURE="${PRESSURE}hPa"
 [ "$WAVE_HEIGHT" != "-" ] && WAVE_HEIGHT="${WAVE_HEIGHT}m"
 [ "$WAVE_PERIOD" != "-" ] && WAVE_PERIOD="${WAVE_PERIOD}s"
+[ "$SEA_SURFACE_TEMPERATURE" != "-" ] && SEA_SURFACE_TEMPERATURE="${SEA_SURFACE_TEMPERATURE}℃"
 
 cat <<TABLE
 | 項目 | 値 |
@@ -569,6 +576,7 @@ cat <<TABLE
 | 波高 | ${WAVE_HEIGHT} |
 | 波向 | ${WAVE_DIR_TEXT} |
 | 波周期 | ${WAVE_PERIOD} |
+| 海水温 | ${SEA_SURFACE_TEMPERATURE} |
 | 潮名 | ${TIDE_NAME} |
 | 満潮 | ${TIDE_HIGH} |
 | 干潮 | ${TIDE_LOW} |
