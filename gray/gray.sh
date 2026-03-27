@@ -4,22 +4,25 @@ set -euo pipefail
 # ============================================================
 # gray.sh
 #
-# 指定した画像ファイルをグレースケールJPEGへ変換する
+# 指定した画像ファイルをJPEGへ変換する
 #
 # 主な仕様:
 # - 単体/複数ファイル対応
 # - 出力先ディレクトリを指定可能
 # - 元画像はバックアップディレクトリへ保存
 # - 同名ファイル衝突時は連番で退避/出力
+# - デフォルトはグレースケール、-c でカラー出力
 #
 # usage:
 #   ./gray.sh image.jpg
+#   ./gray.sh -c image.jpg
 #   ./gray.sh -o ./dist image1.jpg image2.png
 #   ./gray.sh -o ./dist -b ./backup *.jpg
 #
 # option:
 #   -o <dir>   出力先ディレクトリ
 #   -b <dir>   オリジナル保存先ディレクトリ
+#   -c         カラーのまま出力
 #   -h         ヘルプ
 #
 # requirement:
@@ -32,14 +35,16 @@ OUT_DIR="."
 BACKUP_DIR=""
 MAX_GEOMETRY="2000x2000>"
 TARGET_EXTENT="600KB"
+KEEP_COLOR=0
 
 usage() {
   cat <<'EOF'
 usage:
-  gray.sh [-o output_dir] [-b backup_dir] <image_file> [image_file ...]
+  gray.sh [-c] [-o output_dir] [-b backup_dir] <image_file> [image_file ...]
 
 example:
   gray.sh receipt.jpg
+  gray.sh -c receipt.jpg
   gray.sh -o ./dist IMG_0001.JPG IMG_0002.JPG
   gray.sh -o ./dist -b ./originals *.jpg
 
@@ -47,6 +52,7 @@ option:
   -o <dir>   出力先ディレクトリ (default: .)
   -b <dir>   オリジナル保存先ディレクトリ
              (default: ./originals_YYYYmmdd_HHMMSS)
+  -c         カラーのまま出力
   -h         show help
 EOF
 }
@@ -56,10 +62,11 @@ command -v magick >/dev/null 2>&1 || {
   exit 1
 }
 
-while getopts "o:b:h" opt; do
+while getopts "o:b:ch" opt; do
   case "$opt" in
     o) OUT_DIR="$OPTARG" ;;
     b) BACKUP_DIR="$OPTARG" ;;
+    c) KEEP_COLOR=1 ;;
     h)
       usage
       exit 0
@@ -125,12 +132,12 @@ for src in "$@"; do
   }
 
   [ -f "$src" ] || {
-    echo "skip: 通常ファイルではありません: $src" >&2
+#    echo "skip: 通常ファイルではありません: $src" >&2
     continue
   }
 
   is_image_file "$src" || {
-    echo "skip: 非対応ファイルです: $src" >&2
+#    echo "skip: 非対応ファイルです: $src" >&2
     continue
   }
 
@@ -144,22 +151,42 @@ for src in "$@"; do
 
   cp -p "$src_abs" "$backup_path"
 
-  if magick "$src_abs" \
-    -auto-orient \
-    -strip \
-    -resize "$MAX_GEOMETRY" \
-    -colorspace Gray \
-    -depth 8 \
-    -sampling-factor 4:2:0 \
-    -interlace Plane \
-    -define jpeg:extent="$TARGET_EXTENT" \
-    "$out_path"
-  then
-    rm -f -- "$src_abs"
-    echo "ok: $src_abs -> $out_path"
-    echo "backup: $backup_path"
+  if [ "$KEEP_COLOR" -eq 1 ]; then
+    if magick "$src_abs" \
+      -auto-orient \
+      -strip \
+      -resize "$MAX_GEOMETRY" \
+      -depth 8 \
+      -sampling-factor 4:2:0 \
+      -interlace Plane \
+      -define jpeg:extent="$TARGET_EXTENT" \
+      "$out_path"
+    then
+      rm -f -- "$src_abs"
+      echo "ok: $src_abs -> $out_path"
+      echo "backup: $backup_path"
+    else
+      rm -f -- "$out_path" 2>/dev/null || true
+      echo "error: 変換失敗: $src_abs" >&2
+    fi
   else
-    rm -f -- "$out_path" 2>/dev/null || true
-    echo "error: 変換失敗: $src_abs" >&2
+    if magick "$src_abs" \
+      -auto-orient \
+      -strip \
+      -resize "$MAX_GEOMETRY" \
+      -colorspace Gray \
+      -depth 8 \
+      -sampling-factor 4:2:0 \
+      -interlace Plane \
+      -define jpeg:extent="$TARGET_EXTENT" \
+      "$out_path"
+    then
+      rm -f -- "$src_abs"
+      echo "ok: $src_abs -> $out_path"
+      echo "backup: $backup_path"
+    else
+      rm -f -- "$out_path" 2>/dev/null || true
+      echo "error: 変換失敗: $src_abs" >&2
+    fi
   fi
 done
