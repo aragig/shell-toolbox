@@ -280,11 +280,20 @@ PY
 }
 
 calc_moon_age() {
-  python3 - "$TARGET_DATE" <<'PY'
+  python3 - "$TARGET_DATE" "$TARGET_HOUR_PADDED" "$TIMEZONE" <<'PY'
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-dt = datetime.strptime(sys.argv[1], '%Y-%m-%d').replace(tzinfo=timezone.utc)
+date_str = sys.argv[1]
+hour_str = sys.argv[2]
+timezone_str = sys.argv[3]
+
+offsets = {
+    'Asia/Tokyo': timezone(timedelta(hours=9)),
+}
+tz = offsets.get(timezone_str, timezone.utc)
+
+dt = datetime.strptime(f'{date_str} {hour_str}', '%Y-%m-%d %H').replace(tzinfo=tz).astimezone(timezone.utc)
 base = datetime(2000, 1, 6, 18, 14, tzinfo=timezone.utc)
 synodic = 29.53058867
 age = ((dt - base).total_seconds() / 86400.0) % synodic
@@ -293,13 +302,23 @@ PY
 }
 
 calc_tide_name() {
-  python3 - "$TARGET_DATE" <<'PY'
+  python3 - "$TARGET_DATE" "$TIMEZONE" <<'PY'
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+date_str = sys.argv[1]
+timezone_str = sys.argv[2]
+
+offsets = {
+    'Asia/Tokyo': timezone(timedelta(hours=9)),
+}
+tz = offsets.get(timezone_str, timezone.utc)
 
 synodic = 29.53058867
 base = datetime(2000, 1, 6, 18, 14, tzinfo=timezone.utc)
-dt = datetime.strptime(sys.argv[1], '%Y-%m-%d').replace(tzinfo=timezone.utc)
+# Tide names in Japanese tide tables are day-based, not hour-based.
+# Use local noon to avoid flipping the label around midnight.
+dt = datetime.strptime(f'{date_str} 12', '%Y-%m-%d %H').replace(tzinfo=tz).astimezone(timezone.utc)
 age = ((dt - base).total_seconds() / 86400.0) % synodic
 
 if age < 1.5 or age >= 28.0:
@@ -320,9 +339,9 @@ elif age < 19.0:
     name = '中潮'
 elif age < 21.0:
     name = '小潮'
-elif age < 24.0:
+elif age < 25.0:
     name = '長潮'
-elif age < 25.5:
+elif age < 26.0:
     name = '若潮'
 else:
     name = '中潮'
