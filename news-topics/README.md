@@ -1,6 +1,6 @@
 # news-topics.sh
 
-複数の海外ニュースソースからRSS/Atomを取得して、偏りを抑えながら一覧表示するシェルです。
+複数の海外ニュースソースからRSS/Atomを取得して、偏りを抑えながら一覧表示するシェルです。TTY では色付きの CLI 表示、リダイレクト時はプレーンなテキスト出力になります。
 
 ## ねらい
 
@@ -25,6 +25,7 @@
 ./news-topics.sh
 ./news-topics.sh --count 18 --per-source 3
 ./news-topics.sh --translate none
+./news-topics.sh --format cli
 ./news-topics.sh --format tsv
 ```
 
@@ -33,10 +34,12 @@
 ```text
 --count N
 --per-source N
---format markdown|tsv|json
+--format cli|markdown|tsv|json
 --translate auto|openai|google|none
 --timeout SEC
 ```
+
+`--format markdown` は、端末に直接表示する場合は見やすい CLI レイアウトで出し、パイプやリダイレクト時は従来どおり Markdown を出します。
 
 ## 翻訳の挙動
 
@@ -59,4 +62,17 @@ _Sources: BBC / Reuters / NPR / DW / France 24 / Al Jazeera (balanced by source 
 1. [各国首脳が停戦協議を開始](https://example.com/...)
    `BBC | 2026-04-17 01:10 UTC`
    original: Leaders begin ceasefire talks
+```
+
+TTY では次のような見た目になります。
+
+```text
+News Topics
+12 items  |  balanced by source cap (2/source)
+────────────────────────────────────────────────────────────
+
+01. 各国首脳が停戦協議を開始
+    [BBC]  2026-04-17 01:10 UTC
+    EN Leaders begin ceasefire talks
+    URL https://example.com/...
 ```

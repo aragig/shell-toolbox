@@ -11,7 +11,7 @@
 # - ソースごとの上限とラウンドロビンで偏りを抑制
 # - 重複記事を除去
 # - 見出しの日本語訳を付与可能
-# - Markdown / TSV / JSON 出力対応
+# - CLI / Markdown / TSV / JSON 出力対応
 #
 # 動作環境:
 # - macOS
@@ -43,7 +43,7 @@ TIMEOUT=15
 usage() {
   cat <<'EOF'
 usage:
-  news-topics.sh [--count N] [--per-source N] [--format markdown|tsv|json] [--translate auto|openai|google|none]
+  news-topics.sh [--count N] [--per-source N] [--format cli|markdown|tsv|json] [--translate auto|openai|google|none]
 
 example:
   news-topics.sh
@@ -54,7 +54,7 @@ example:
 option:
   --count N         表示件数の上限 (default: 12)
   --per-source N    1ソースあたりの最大件数 (default: 2)
-  --format FORMAT   markdown / tsv / json (default: markdown)
+  --format FORMAT   cli / markdown / tsv / json (default: markdown, ttyではcli風表示)
   --translate MODE  auto / openai / google / none (default: auto)
   --timeout SEC     各フィード取得タイムアウト秒 (default: 15)
   -h, --help        show help
@@ -137,9 +137,9 @@ is_positive_int "$TIMEOUT" || {
 }
 
 case "$FORMAT" in
-  markdown|tsv|json) ;;
+  cli|markdown|tsv|json) ;;
   *)
-    echo "--format must be markdown, tsv, or json" >&2
+    echo "--format must be cli, markdown, tsv, or json" >&2
     exit 1
     ;;
 esac
@@ -166,8 +166,10 @@ import html
 import json
 import os
 import re
+import shutil
 import sys
 import time
+import textwrap
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -228,6 +230,16 @@ OPENAI_MODEL = (
     or os.environ.get("OPENAI_MODEL", "").strip()
     or "gpt-4o-mini"
 )
+
+
+SOURCE_COLORS = {
+    "BBC": "196",
+    "Reuters": "214",
+    "NPR": "33",
+    "DW": "39",
+    "France 24": "45",
+    "Al Jazeera": "220",
+}
 
 
 def fetch_text(url: str, timeout: int) -> str:
@@ -596,6 +608,73 @@ def render_markdown(items: List[Dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def supports_color() -> bool:
+    if not sys.stdout.isatty():
+        return False
+    if os.environ.get("NO_COLOR"):
+        return False
+    term = os.environ.get("TERM", "")
+    return term not in ("", "dumb")
+
+
+def ansi(text: str, *codes: str, enable: bool) -> str:
+    if not enable or not codes:
+        return text
+    return f"\033[{';'.join(codes)}m{text}\033[0m"
+
+
+def wrap_block(text: str, width: int, prefix: str, subsequent: str) -> List[str]:
+    if not text:
+        return []
+    return textwrap.wrap(
+        text,
+        width=max(width, 20),
+        initial_indent=prefix,
+        subsequent_indent=subsequent,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+
+
+def render_cli(items: List[Dict[str, str]]) -> str:
+    color = supports_color()
+    width = max(shutil.get_terminal_size(fallback=(100, 24)).columns, 72)
+    body_width = max(width - 4, 40)
+    title_width = max(body_width - 4, 24)
+
+    title = ansi("News Topics", "1", "38;5;15", enable=color)
+    meta = ansi(
+        f"{len(items)} items  |  balanced by source cap ({PER_SOURCE}/source)",
+        "2",
+        "38;5;246",
+        enable=color,
+    )
+
+    lines = [title, meta, ansi("─" * min(width, 100), "38;5;240", enable=color), ""]
+
+    for idx, item in enumerate(items, start=1):
+        num = ansi(f"{idx:02d}.", "1", "38;5;250", enable=color)
+        ja_title = item["title_ja"].strip() or item["title"]
+        lines.extend(wrap_block(ja_title, title_width, f"{num} ", "    "))
+
+        source_color = SOURCE_COLORS.get(item["source"], "81")
+        source = ansi(f"[{item['source']}]", "1", f"38;5;{source_color}", enable=color)
+        published = item["published"] or "date unknown"
+        detail = f"{source}  {ansi(published, '2', '38;5;246', enable=color)}"
+        lines.append(f"    {detail}")
+
+        if item["title_ja"] != item["title"]:
+            original = ansi("EN", "2", "38;5;244", enable=color)
+            lines.extend(wrap_block(item["title"], body_width - 4, f"    {original} ", "       "))
+
+        url_label = ansi("URL", "2", "38;5;111", enable=color)
+        url_value = ansi(item["link"], "4", "38;5;117", enable=color)
+        lines.extend(wrap_block(url_value, body_width - 5, f"    {url_label} ", "        "))
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
 def render_tsv(items: List[Dict[str, str]]) -> str:
     rows = ["source\tpublished\ttitle_ja\ttitle\tlink"]
     for item in items:
@@ -625,8 +704,13 @@ def main() -> int:
 
     attach_translations(items)
 
-    if FORMAT == "markdown":
-        print(render_markdown(items))
+    if FORMAT == "cli":
+        print(render_cli(items))
+    elif FORMAT == "markdown":
+        if sys.stdout.isatty():
+            print(render_cli(items))
+        else:
+            print(render_markdown(items))
     elif FORMAT == "tsv":
         print(render_tsv(items))
     else:
