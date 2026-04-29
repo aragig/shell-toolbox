@@ -39,11 +39,12 @@ PER_SOURCE=2
 FORMAT="markdown"
 TRANSLATE_MODE="auto"
 TIMEOUT=15
+PROGRESS_MODE="${NEWS_TOPICS_PROGRESS:-auto}"
 
 usage() {
   cat <<'EOF'
 usage:
-  news-topics.sh [--count N] [--per-source N] [--format cli|markdown|tsv|json] [--translate auto|openai|google|none]
+  news-topics.sh [--count N] [--per-source N] [--format cli|markdown|tsv|json] [--translate auto|openai|google|none] [--progress|--no-progress]
 
 example:
   news-topics.sh
@@ -57,10 +58,13 @@ option:
   --format FORMAT   cli / markdown / tsv / json (default: markdown, ttyではcli風表示)
   --translate MODE  auto / openai / google / none (default: auto)
   --timeout SEC     各フィード取得タイムアウト秒 (default: 15)
+  --progress        show progress on stderr
+  --no-progress     hide progress
   -h, --help        show help
 
 environment:
   NEWS_TOPICS_PYTHON              Python interpreter override
+  NEWS_TOPICS_PROGRESS            auto / always / never (default: auto)
   OPENAI_API_KEY                  OpenAI API key
   OPENAI_MODEL                    default: gpt-4o-mini
   NEWS_TOPICS_OPENAI_MODEL        OPENAI_MODEL より優先
@@ -130,6 +134,14 @@ while [ $# -gt 0 ]; do
       TIMEOUT="${2:?--timeout requires value}"
       shift 2
       ;;
+    --progress)
+      PROGRESS_MODE="always"
+      shift
+      ;;
+    --no-progress)
+      PROGRESS_MODE="never"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -173,11 +185,20 @@ case "$TRANSLATE_MODE" in
     ;;
 esac
 
+case "$PROGRESS_MODE" in
+  auto|always|never|1|true|yes|on|0|false|no|off|none) ;;
+  *)
+    echo "--progress mode must be auto, always, or never" >&2
+    exit 1
+    ;;
+esac
+
 export NEWS_TOPICS_COUNT="$COUNT"
 export NEWS_TOPICS_PER_SOURCE="$PER_SOURCE"
 export NEWS_TOPICS_FORMAT="$FORMAT"
 export NEWS_TOPICS_TRANSLATE="$TRANSLATE_MODE"
 export NEWS_TOPICS_TIMEOUT="$TIMEOUT"
+export NEWS_TOPICS_PROGRESS="$PROGRESS_MODE"
 
 "$PYTHON_BIN" - <<'PY'
 from __future__ import annotations
@@ -196,6 +217,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Dict, List
 
@@ -245,12 +267,23 @@ PER_SOURCE = int(os.environ.get("NEWS_TOPICS_PER_SOURCE", "2"))
 FORMAT = os.environ.get("NEWS_TOPICS_FORMAT", "markdown")
 TRANSLATE_MODE = os.environ.get("NEWS_TOPICS_TRANSLATE", "auto")
 TIMEOUT = int(os.environ.get("NEWS_TOPICS_TIMEOUT", "15"))
+PROGRESS_MODE = os.environ.get("NEWS_TOPICS_PROGRESS", "auto").strip().lower()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = (
     os.environ.get("NEWS_TOPICS_OPENAI_MODEL", "").strip()
     or os.environ.get("OPENAI_MODEL", "").strip()
     or "gpt-4o-mini"
 )
+
+PROGRESS_ENABLED = (
+    PROGRESS_MODE in ("always", "1", "true", "yes", "on")
+    or (
+        PROGRESS_MODE not in ("never", "0", "false", "no", "off", "none")
+        and sys.stderr.isatty()
+    )
+)
+PROGRESS_INLINE = PROGRESS_ENABLED and sys.stderr.isatty()
+_PROGRESS_LAST_WIDTH = 0
 
 
 SOURCE_COLORS = {
@@ -261,6 +294,33 @@ SOURCE_COLORS = {
     "France 24": "45",
     "Al Jazeera": "220",
 }
+
+
+def progress(message: str) -> None:
+    global _PROGRESS_LAST_WIDTH
+
+    if not PROGRESS_ENABLED:
+        return
+
+    line = f"news: {message}"
+    if PROGRESS_INLINE:
+        padding = " " * max(_PROGRESS_LAST_WIDTH - len(line), 0)
+        sys.stderr.write(f"\r{line}{padding}")
+        sys.stderr.flush()
+        _PROGRESS_LAST_WIDTH = len(line)
+    else:
+        print(line, file=sys.stderr, flush=True)
+
+
+def progress_clear() -> None:
+    global _PROGRESS_LAST_WIDTH
+
+    if not PROGRESS_INLINE or _PROGRESS_LAST_WIDTH <= 0:
+        return
+
+    sys.stderr.write("\r" + (" " * _PROGRESS_LAST_WIDTH) + "\r")
+    sys.stderr.flush()
+    _PROGRESS_LAST_WIDTH = 0
 
 
 def fetch_text(url: str, timeout: int) -> str:
@@ -520,14 +580,18 @@ def attach_translations(items: List[Dict[str, str]]) -> None:
 
     if backend == "openai":
         try:
+            progress(f"翻訳中: OpenAI ({len(unique_titles)}件)")
             translations = translate_openai(unique_titles)
         except Exception:
             if TRANSLATE_MODE == "openai":
                 raise
+            progress("OpenAI翻訳に失敗: Google翻訳へ切り替え")
             backend = "google"
 
     if backend == "google":
-        for title in unique_titles:
+        total = len(unique_titles)
+        for idx, title in enumerate(unique_titles, start=1):
+            progress(f"翻訳中: Google ({idx}/{total})")
             try:
                 translations[title] = translate_google(title)
                 time.sleep(0.15)
@@ -539,15 +603,38 @@ def attach_translations(items: List[Dict[str, str]]) -> None:
         item["title_ja"] = translated or item["title"]
 
 
-def fetch_all_items() -> List[Dict[str, str]]:
-    all_items: List[Dict[str, str]] = []
+def fetch_source_items(source: Dict[str, str]) -> List[Dict[str, str]]:
+    xml_text = fetch_text(source["url"], timeout=TIMEOUT)
+    return parse_feed(xml_text, source)
 
+
+def fetch_all_items() -> List[Dict[str, str]]:
+    total_sources = len(SOURCES)
+    max_workers = min(total_sources, 6)
+    results: Dict[str, List[Dict[str, str]]] = {}
+
+    progress(f"RSS取得中: {total_sources}媒体を並列取得")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_source = {
+            executor.submit(fetch_source_items, source): source
+            for source in SOURCES
+        }
+
+        for completed, future in enumerate(as_completed(future_to_source), start=1):
+            source = future_to_source[future]
+            try:
+                source_items = future.result()
+                results[source["id"]] = source_items
+                progress(
+                    f"RSS取得中: {source['name']} ({completed}/{total_sources}) - {len(source_items)}件"
+                )
+            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ET.ParseError):
+                results[source["id"]] = []
+                progress(f"RSS取得中: {source['name']} ({completed}/{total_sources}) - スキップ")
+
+    all_items: List[Dict[str, str]] = []
     for source in SOURCES:
-        try:
-            xml_text = fetch_text(source["url"], timeout=TIMEOUT)
-            all_items.extend(parse_feed(xml_text, source))
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ET.ParseError):
-            continue
+        all_items.extend(results.get(source["id"], []))
 
     return all_items
 
@@ -717,27 +804,34 @@ def render_json(items: List[Dict[str, str]]) -> str:
 
 
 def main() -> int:
-    items = fetch_all_items()
-    items = dedupe_items(items)
-    items = balance_items(items)
+    try:
+        items = fetch_all_items()
+        progress(f"見出し整理中: {len(items)}件")
+        items = dedupe_items(items)
+        items = balance_items(items)
 
-    if not items:
-        print("error: ニュース取得に失敗しました。ネットワークまたは各RSS URLを確認してください。", file=sys.stderr)
-        return 1
+        if not items:
+            progress_clear()
+            print("error: ニュース取得に失敗しました。ネットワークまたは各RSS URLを確認してください。", file=sys.stderr)
+            return 1
 
-    attach_translations(items)
+        attach_translations(items)
+        progress_clear()
 
-    if FORMAT == "cli":
-        print(render_cli(items))
-    elif FORMAT == "markdown":
-        if sys.stdout.isatty():
+        if FORMAT == "cli":
             print(render_cli(items))
+        elif FORMAT == "markdown":
+            if sys.stdout.isatty():
+                print(render_cli(items))
+            else:
+                print(render_markdown(items))
+        elif FORMAT == "tsv":
+            print(render_tsv(items))
         else:
-            print(render_markdown(items))
-    elif FORMAT == "tsv":
-        print(render_tsv(items))
-    else:
-        print(render_json(items))
+            print(render_json(items))
+    except Exception:
+        progress_clear()
+        raise
 
     return 0
 

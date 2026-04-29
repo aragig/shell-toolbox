@@ -1,12 +1,14 @@
 # news-topics.sh
 
 複数の海外ニュースソースからRSS/Atomを取得して、偏りを抑えながら一覧表示するシェルです。TTY では色付きの CLI 表示、リダイレクト時はプレーンなテキスト出力になります。
+端末で直接実行している間は、RSS 取得や翻訳の進捗を stderr に表示します。
 
 ## ねらい
 
 - `Yahooニュース` のようなポータル依存ではなく、一次配信に近い媒体を直接参照する
 - 1媒体に並びが偏りすぎないようにする
 - 見出しの日本語訳を付ける
+- 複数媒体を並列に取得し、待ち時間中は進捗を表示する
 
 ## 既定の取得元
 
@@ -27,6 +29,7 @@
 ./news-topics.sh --translate none
 ./news-topics.sh --format cli
 ./news-topics.sh --format tsv
+./news-topics.sh --no-progress
 ```
 
 ## オプション
@@ -37,9 +40,13 @@
 --format cli|markdown|tsv|json
 --translate auto|openai|google|none
 --timeout SEC
+--progress
+--no-progress
 ```
 
 `--format markdown` は、端末に直接表示する場合は見やすい CLI レイアウトで出し、パイプやリダイレクト時は従来どおり Markdown を出します。
+
+進捗表示は端末で直接実行した場合に自動で有効になります。stdout には混ぜないため、JSON や TSV の出力はそのままパイプできます。表示を消したい場合は `--no-progress`、端末以外でも表示したい場合は `--progress` を指定します。
 
 ## 翻訳の挙動
 
@@ -55,6 +62,8 @@
 ## Python の選択
 
 `python3` の XML サポートが壊れている場合は、`/usr/bin/python3` など利用可能な Python 3 へ自動でフォールバックします。明示的に指定する場合は `NEWS_TOPICS_PYTHON=/path/to/python3` を設定してください。
+
+進捗表示は `NEWS_TOPICS_PROGRESS=auto|always|never` でも指定できます。
 
 ## 出力例
 
