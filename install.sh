@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN_DIR="$SCRIPT_DIR/bin"
+BIN_DIR="${SHELL_TOOLBOX_BIN_DIR:-$SCRIPT_DIR/bin}"
 
 exec 3<&0
 
@@ -31,12 +31,17 @@ prompt_yn() {
 }
 
 display_path() {
-  case "$BIN_DIR" in
+  display_any_path "$BIN_DIR"
+}
+
+display_any_path() {
+  local path="$1"
+  case "$path" in
     "$HOME"/*)
-      printf '$HOME%s\n' "${BIN_DIR#"$HOME"}"
+      printf '$HOME%s\n' "${path#"$HOME"}"
       ;;
     *)
-      printf '%s\n' "$BIN_DIR"
+      printf '%s\n' "$path"
       ;;
   esac
 }
@@ -74,8 +79,14 @@ install_command() {
   local description="$3"
   local target_abs="$SCRIPT_DIR/$target_rel"
   local link_path="$BIN_DIR/$command_name"
-  local link_target="../$target_rel"
+  local link_target="$target_abs"
   local current_target
+  local link_display
+
+  if [ "$BIN_DIR" = "$SCRIPT_DIR/bin" ]; then
+    link_target="../$target_rel"
+  fi
+  link_display="$(display_any_path "$link_path")"
 
   echo
   echo "$command_name"
@@ -98,18 +109,18 @@ install_command() {
   if [ -L "$link_path" ]; then
     current_target="$(readlink "$link_path")"
     if [ "$current_target" = "$link_target" ] || [ "$current_target" = "$target_abs" ]; then
-      echo "  already installed: bin/$command_name -> $current_target"
+      echo "  already installed: $link_display -> $current_target"
       return 0
     fi
 
-    echo "  existing symlink: bin/$command_name -> $current_target"
+    echo "  existing symlink: $link_display -> $current_target"
     if ! prompt_yn "Replace it? [y/N] "; then
       echo "  skipped"
       return 0
     fi
     rm -f "$link_path"
   elif [ -e "$link_path" ]; then
-    echo "  existing path: bin/$command_name"
+    echo "  existing path: $link_display"
     if [ -d "$link_path" ]; then
       echo "  skipped: directory exists and will not be replaced" >&2
       return 0
@@ -122,12 +133,12 @@ install_command() {
   fi
 
   ln -s "$link_target" "$link_path"
-  echo "  installed: bin/$command_name -> $link_target"
+  echo "  installed: $link_display -> $link_target"
 }
 
 echo "shell-toolbox command installer"
-echo "Repository: $SCRIPT_DIR"
-echo "Install dir: $BIN_DIR"
+echo "Source dir:  $SCRIPT_DIR"
+echo "Command dir: $BIN_DIR"
 
 while IFS='|' read -r command_name target_rel description; do
   [ -n "$command_name" ] || continue
