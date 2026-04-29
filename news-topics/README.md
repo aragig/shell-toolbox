@@ -52,6 +52,10 @@
 
 ※ `google` は非公式寄りの簡易利用なので、安定性やポリシー面を厳密にしたいなら `openai` のほうが安全です。
 
+## Python の選択
+
+`python3` の XML サポートが壊れている場合は、`/usr/bin/python3` など利用可能な Python 3 へ自動でフォールバックします。明示的に指定する場合は `NEWS_TOPICS_PYTHON=/path/to/python3` を設定してください。
+
 ## 出力例
 
 ```markdown

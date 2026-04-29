@@ -60,6 +60,7 @@ option:
   -h, --help        show help
 
 environment:
+  NEWS_TOPICS_PYTHON              Python interpreter override
   OPENAI_API_KEY                  OpenAI API key
   OPENAI_MODEL                    default: gpt-4o-mini
   NEWS_TOPICS_OPENAI_MODEL        OPENAI_MODEL より優先
@@ -85,7 +86,27 @@ is_positive_int() {
 }
 
 need_cmd curl
-need_cmd python3
+
+select_python() {
+  local candidate
+  for candidate in "${NEWS_TOPICS_PYTHON:-}" python3 /usr/bin/python3 python3.13 python3.12 python3.11 python3.10 python3.9; do
+    [ -n "$candidate" ] || continue
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    if "$candidate" - <<'PY' >/dev/null 2>&1
+import xml.etree.ElementTree as ET
+ET.fromstring("<root />")
+PY
+    then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  echo "command not found: a Python 3 interpreter with working XML support" >&2
+  return 1
+}
+
+PYTHON_BIN="$(select_python)"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -158,7 +179,7 @@ export NEWS_TOPICS_FORMAT="$FORMAT"
 export NEWS_TOPICS_TRANSLATE="$TRANSLATE_MODE"
 export NEWS_TOPICS_TIMEOUT="$TIMEOUT"
 
-python3 - <<'PY'
+"$PYTHON_BIN" - <<'PY'
 from __future__ import annotations
 
 import email.utils
@@ -483,6 +504,8 @@ def translate_openai(texts: List[str]) -> Dict[str, str]:
 def attach_translations(items: List[Dict[str, str]]) -> None:
     backend = choose_translate_backend()
     if backend == "none":
+        for item in items:
+            item["title_ja"] = item["title"]
         return
 
     unique_titles = []
