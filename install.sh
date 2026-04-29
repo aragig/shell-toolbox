@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${SHELL_TOOLBOX_REPO:-aragig/shell-toolbox}"
-REF="${SHELL_TOOLBOX_REF:-main}"
 INSTALL_DIR="${SHELL_TOOLBOX_INSTALL_DIR:-$HOME/.local/share/shell-toolbox}"
 BIN_DIR="${SHELL_TOOLBOX_BIN_DIR:-$HOME/.local/bin}"
-TARBALL_URL="${SHELL_TOOLBOX_TARBALL_URL:-https://github.com/$REPO/archive/$REF.tar.gz}"
+TARBALL_URL="https://github.com/aragig/shell-toolbox/archive/main.tar.gz"
 FORCE_REMOTE="${SHELL_TOOLBOX_REMOTE:-0}"
 TMP_DIR=""
 SOURCE_DIR=""
@@ -124,9 +122,7 @@ download_install_tree() {
   mkdir -p "$extract_dir"
 
   echo "Downloading shell-toolbox:"
-  echo "  repository: $REPO"
-  echo "  ref:        $REF"
-  echo "  url:        $TARBALL_URL"
+  echo "  url: $TARBALL_URL"
 
   curl -fsSL "$TARBALL_URL" -o "$archive"
   tar -xzf "$archive" -C "$extract_dir"
